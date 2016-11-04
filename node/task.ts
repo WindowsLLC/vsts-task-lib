@@ -1095,6 +1095,131 @@ class FindItem {
 }
 
 /**
+ * Interprets dirs
+ */
+export function matchFiles(
+    defaultRoot: string,
+    patterns: string[],
+    findOptions?: FindOptions,
+    matchOptions?: MatchOptions) : string[] {
+
+    debug(`defaultRoot: '${defaultRoot}'`);
+    if (!defaultRoot) {
+        defaultRoot = process.cwd();
+        debug(`fallback to cwd: '${defaultRoot}'`);
+    }
+
+    findOptions = findOptions || <FindOptions>{ followSymbolicLinks: true };
+    matchOptions = matchOptions || <MatchOptions>{
+        dot: true,
+        matchBase: false,
+        nocase: process.platform == 'win32'
+    };
+    if (matchOptions.matchBase) {
+        throw new Error('match option matchBase is not supported by matchFiles()');
+    }
+
+    // normalize slashes for root dir
+    defaultRoot = normalizePath(defaultRoot);
+
+    let files: string[];
+    for (let pattern of patterns) {
+        pattern = pattern || '';
+
+        // skip comments
+        if (!matchOptions.nocomment && pattern.startsWith('#')) {
+            debug(`skipping comment: '${pattern}'`);
+            continue;
+        }
+
+        // count leading '!'
+        let negateCount = 0;
+        if (!matchOptions.nonegate) {
+            while (pattern.charAt(negateCount) == '!') {
+                negateCount++;
+            }
+
+            pattern = pattern.substring(negateCount);
+        }
+
+        pattern = ensureRooted(defaultRoot, pattern);
+        if (negateCount % 2 == 0 || matchOptions.nonegate) {
+            // include
+        }
+        else {
+            // exclude
+        }
+    }
+    // if not patterns, return find()
+
+    // normalize slashes for patterns
+
+    // root unrooted paths (handle leading ! carefully)
+
+
+    // determine firstfindPath:
+    // if no include pattern, use rootDirectory
+    // otherwise find greatest common root - validate is rootDirectory or descendant
+
+    // run find, apply patterns
+}
+
+function ensureRooted(root: string, p: string) {
+    p = normalizePath(p);
+    if (!p) {
+        throw new Error('ensureRooted() parameter "p" cannot be empty');
+    }
+
+    if (process.platform == 'win32') {
+        if (p.startsWith('\\') ||   // e.g. \hello or \\hello
+            /^[A-Z]:/i.test(p)) {   // e.g. C: or C:\hello
+
+            return p;
+        }
+    }
+    else if (p.startsWith('/')) { // e.g. /hello
+        return p;
+    }
+
+    root = normalizePath(root);
+    if (!root) {
+        throw new Error('ensureRooted parameter "root" cannot be empty');
+    }
+
+    return root + (root.endsWith(path.sep) ? '' : path.sep) + p;
+}
+
+// function isAbsolutePath(p: string): string {
+//     p = p || '';
+//     if (process.platform == 'win32') {
+//         // convert slashes on Windows
+//         p = p.replace(/\//g, '\\');
+
+//         // remove redundant slashes
+//         let isUnc = /^\\\\+[^\\]/.test(p); // e.g. \\hello
+//         return (isUnc ? '\\' : '') + p.replace(/\\\\+/g, '\\'); // preserve leading // for UNC
+//     }
+
+//     // remove redundant slashes
+//     return p.replace(/\/\/+/g, '/');
+// }
+
+function normalizePath(p: string): string {
+    p = p || '';
+    if (process.platform == 'win32') {
+        // convert slashes on Windows
+        p = p.replace(/\//g, '\\');
+
+        // remove redundant slashes
+        let isUnc = /^\\\\+[^\\]/.test(p); // e.g. \\hello
+        return (isUnc ? '\\' : '') + p.replace(/\\\\+/g, '\\'); // preserve leading // for UNC
+    }
+
+    // remove redundant slashes
+    return p.replace(/\/\/+/g, '/');
+}
+
+/**
  * Prefer tl.find() and tl.match() instead. This function is for backward compatibility
  * when porting tasks to Node from the PowerShell or PowerShell3 execution handler.
  *
