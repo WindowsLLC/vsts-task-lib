@@ -3,6 +3,7 @@ import shell = require('shelljs');
 import fs = require('fs');
 import path = require('path');
 import os = require('os');
+import braceexpansion = require('braceexpansion');
 import minimatch = require('minimatch');
 import globm = require('glob');
 import util = require('util');
@@ -1126,8 +1127,13 @@ export function findAndMatch(
     defaultRoot = normalizePath(defaultRoot);
 
     let files: string[];
-    for (let pattern of patterns) {
-        pattern = pattern || '';
+
+    // reverse and process the patterns as a stack
+    patterns = patterns.reverse();
+    while (patterns.length) {
+        let pattern = patterns.pop() || '';
+
+        // skip empty
         if (!pattern) {
             continue;
         }
@@ -1138,50 +1144,67 @@ export function findAndMatch(
             continue;
         }
 
-        // leading "\#" means literal "#".
-        // trim the leading "\" so path will be rooted properly.
-        if (pattern.startsWith('\\#')) {
-            pattern = pattern.substring(1);
-        }
-
-        // count leading '!'
+        // determine whether pattern is include or exclude
         let negateCount = 0;
         if (!matchOptions.nonegate) {
             while (pattern.charAt(negateCount) == '!') {
                 negateCount++;
             }
 
-            pattern = pattern.substring(negateCount);
+            pattern = pattern.substring(negateCount); // trim leading '!'
         }
 
-        // normalize the pattern
-        pattern = normalizePath(pattern);
+        let isIncludePattern = negateCount == 0 ||
+            (negateCount % 2 == 0 && !matchOptions.flipNegate) ||
+            (negateCount % 2 == 1 && matchOptions.flipNegate);
 
-        // ensure the pattern is rooted
-        if (!isRooted(pattern)) {
-            if (matchOptions.matchBase && pattern.indexOf(path.sep) < 0) {
-                ensureRooted(defaultRoot, `**/${pattern}`);
+        // expand braces - required to accurately interpret findPath
+        let expanded: string[] = braceexpansion(pattern);
+        for (let pattern of expanded) {
+            // leading '\#' means literal '#' - remove leading '\' so the path will be rooted properly
+            if (pattern.startsWith('\\#')) {
+                pattern = pattern.substring(1);
+            }
+
+            // todo: note, this is safe since minimatch currently (3.0.3) does not support escape characters on Windows
+            // normalize the pattern
+            pattern = normalizePath(pattern);
+
+            // ensure the pattern is rooted
+            if (!isRooted(pattern)) {
+                if (matchOptions.matchBase && pattern.indexOf(path.sep) < 0) {
+                    ensureRooted(defaultRoot, `**/${pattern}`);
+                }
+                else {
+                    ensureRooted(defaultRoot, pattern);
+                }
+            }
+
+            if (isIncludePattern) {
+                // todo: note, this is safe since minimatch currently (3.0.3) does not support escape characters on Windows
+                // determine the find path
+                let findPath = '';
+
+/*
+  ?(pattern-list)   Matches zero or one occurrence of the given patterns
+  *(pattern-list)   Matches zero or more occurrences of the given patterns
+  +(pattern-list)   Matches one or more occurrences of the given patterns
+  @(pattern-list)   Matches one of the given patterns
+  !(pattern-list)   Matches anything except one of the given patterns
+
+  also '(' and ')'
+
+  also consider escaped brace expansion? or does that matter at this point?
+*/
+                let escaped = false;
+                for (let i = 0 ; i < pattern.length ; i++) {
+                    let char = pattern.charAt(i);
+                    if (char == '?')
+                }
             }
             else {
-                ensureRooted(defaultRoot, pattern);
+                // exclude
             }
-        }
-
-        if (negateCount == 0 ||
-            (negateCount % 2 == 0 && !matchOptions.flipNegate) ||
-            (negateCount % 2 == 1 && matchOptions.flipNegate)) {
-
-            // the pattern is an include pattern
-
-            // determine the find path
-            let findPath = '';
-            for (let i = 0 ; i < pattern.length ; i++) {
-                let char = pattern.charAt(i);
-//                if (char == '?')
-            }
-        }
-        else {
-            // exclude
         }
     }
 

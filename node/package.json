@@ -24,6 +24,7 @@
   },
   "homepage": "https://github.com/Microsoft/vsts-task-lib",
   "dependencies": {
+    "brace-expansion": "^1.0.0",
     "glob": "^6.0.1",
     "minimatch": "^3.0.0",
     "mockery": "^1.7.0",
