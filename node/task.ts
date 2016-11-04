@@ -1094,30 +1094,33 @@ class FindItem {
     }
 }
 
-/**
- * Interprets dirs
- */
-export function matchFiles(
+export function findAndMatch(
     defaultRoot: string,
     patterns: string[],
     findOptions?: FindOptions,
     matchOptions?: MatchOptions) : string[] {
 
+    // apply defaults for parameters and trace
+    defaultRoot = defaultRoot || getInput('System.DefaultWorkingDirectory') || process.cwd();
     debug(`defaultRoot: '${defaultRoot}'`);
-    if (!defaultRoot) {
-        defaultRoot = process.cwd();
-        debug(`fallback to cwd: '${defaultRoot}'`);
-    }
+    patterns = patterns || [];
+    patterns.forEach((pattern: string, index: number) => {
+        debug(`pattern[${index}]: '${pattern}'`);
+    })
 
     findOptions = findOptions || <FindOptions>{ followSymbolicLinks: true };
+    Object.keys(findOptions).forEach((key: string) => {
+        debug(`findOptions['${key}']: '${findOptions[key]}'`);
+    })
+
     matchOptions = matchOptions || <MatchOptions>{
         dot: true,
         matchBase: false,
         nocase: process.platform == 'win32'
     };
-    if (matchOptions.matchBase) {
-        throw new Error('match option matchBase is not supported by matchFiles()');
-    }
+    Object.keys(matchOptions).forEach((key: string) => {
+        debug(`matchOptions['${key}']: '${matchOptions[key]}'`);
+    })
 
     // normalize slashes for root dir
     defaultRoot = normalizePath(defaultRoot);
@@ -1125,11 +1128,20 @@ export function matchFiles(
     let files: string[];
     for (let pattern of patterns) {
         pattern = pattern || '';
+        if (!pattern) {
+            continue;
+        }
 
         // skip comments
         if (!matchOptions.nocomment && pattern.startsWith('#')) {
             debug(`skipping comment: '${pattern}'`);
             continue;
+        }
+
+        // leading "\#" means literal "#".
+        // trim the leading "\" so path will be rooted properly.
+        if (pattern.startsWith('\\#')) {
+            pattern = pattern.substring(1);
         }
 
         // count leading '!'
@@ -1142,26 +1154,38 @@ export function matchFiles(
             pattern = pattern.substring(negateCount);
         }
 
-        pattern = ensureRooted(defaultRoot, pattern);
-        if (negateCount % 2 == 0 || matchOptions.nonegate) {
-            // include
+        // normalize the pattern
+        pattern = normalizePath(pattern);
+
+        // ensure the pattern is rooted
+        if (!isRooted(pattern)) {
+            if (matchOptions.matchBase && pattern.indexOf(path.sep) < 0) {
+                ensureRooted(defaultRoot, `**/${pattern}`);
+            }
+            else {
+                ensureRooted(defaultRoot, pattern);
+            }
+        }
+
+        if (negateCount == 0 ||
+            (negateCount % 2 == 0 && !matchOptions.flipNegate) ||
+            (negateCount % 2 == 1 && matchOptions.flipNegate)) {
+
+            // the pattern is an include pattern
+
+            // determine the find path
+            let findPath = '';
+            for (let i = 0 ; i < pattern.length ; i++) {
+                let char = pattern.charAt(i);
+//                if (char == '?')
+            }
         }
         else {
             // exclude
         }
     }
-    // if not patterns, return find()
 
-    // normalize slashes for patterns
-
-    // root unrooted paths (handle leading ! carefully)
-
-
-    // determine firstfindPath:
-    // if no include pattern, use rootDirectory
-    // otherwise find greatest common root - validate is rootDirectory or descendant
-
-    // run find, apply patterns
+    return Object.keys(files).sort();
 }
 
 function ensureRooted(root: string, p: string) {
@@ -1189,6 +1213,19 @@ function ensureRooted(root: string, p: string) {
     return root + (root.endsWith(path.sep) ? '' : path.sep) + p;
 }
 
+function isRooted(p: string): boolean {
+    p = normalizePath(p);
+    if (!p) {
+        throw new Error('isRooted() parameter "p" cannot be empty');
+    }
+
+    if (process.platform == 'win32') {
+        return p.startsWith('\\') || // e.g. \hello or \\hello
+            /^[A-Z]:/i.test(p);      // e.g. C: or C:\hello
+    }
+
+    return p.startsWith('/'); // e.g. /hello
+}
 // function isAbsolutePath(p: string): string {
 //     p = p || '';
 //     if (process.platform == 'win32') {
