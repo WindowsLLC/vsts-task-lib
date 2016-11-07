@@ -1126,6 +1126,16 @@ export function findAndMatch(
     // normalize slashes for root dir
     defaultRoot = normalizePath(defaultRoot);
 
+    // escape the defaultRoot
+    let escapedDefaultRoot =
+        (process.platform == 'win32' ? defaultRoot : defaultRoot.replace(/\\/g, '\\\\')) // escape '\' on OSX/Linux
+        .replace(/\[/g, '[[]')
+        .replace(/\?/g, '[?]')
+        .replace(/\*/g, '[*]')
+        .replace(/\+/g, '[+]')
+        .replace(/@/g, '[@]')
+        .replace(/!/g, '[!]');
+
     let results: { [key: string]: string };
     let originalMatchOptions = matchOptions;
     for (let pattern of patterns) {
@@ -1201,39 +1211,89 @@ export function findAndMatch(
                 }
                 else {
                     // root the pattern
-                    pattern = normalizeAndEnsureRooted(defaultRoot, pattern);
+                    pattern = normalizeAndEnsureRooted(escapedDefaultRoot, pattern);
                     pattern = process.platform == 'win32' ? pattern.replace(/\\/g, '/') : pattern; // convert slashes
-                    // todo: make improvements here to enable using '@(...)' as a substitute for lack of an escape character on Windows
 
                     // for the sake of determining the findPath, pretend nocase=false
                     let originalNoCase = matchOptions.nocase;
                     matchOptions.nocase = false;
 
                     // use the parsed segments to build the findPath
-                    // todo: the technique used here imposes a limitation for drive-relative paths with a glob in the first segment, e.g. C:hello*/world
+                    // todo: the technique here imposes a limitation for drive-relative paths with a glob in the first segment, e.g. C:hello*/world
                     let parsedSegments = new minimatch.Minimatch(pattern, matchOptions).set[0];
                     let statOnly = true;
                     for (let i = 0 ; i < parsedSegments.length ; i++) {
                         let parsedSegment = parsedSegments[0];
                         if (typeof parsedSegment == 'string') {
                             // the item is a string when the original input for the path segment does not contain any unescaped glob characters.
-                            // note, the string here is already unescaped (i.e. escaping removed), so it is ready to pass to find() as-is.
+                            // note, the string here is already unescaped (i.e. glob escaping removed), so it is ready to pass to find() as-is.
+                            // for example, an input string 'hello\\*world' => 'hello*world'.
                             findPath += parsedSegment + '/';
                             continue;
                         }
 
-                        // the item is a RegExp when the original input for the path segment contains globs, extended globs, or malformed
-                        // extended globs. malformed extended globs effectively result in the regex-escaped original input for the path segment,
-                        // so they can be easily detected. malformed extended globs are useful since they can be used to build the find path.
-                        let unescapedGlob = parsedSegment._glob.replace(/\\(.)/g, '$1'); // unescape the original input for the path segment
-                        let regexEscapedGlob = parsedSegment._glob.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&'); // same escaping minimatch uses
-                        if ('(?=.)' + regexEscapedGlob == parsedSegment._src) {
-                            // malformed extended glob detected
+                        // todo: consider unescaping simple '@(...)' extended globs that do not use a vertical pipe
+
+                        // if the item is not a string, then it is a RegExp. this occurs when the original input for the path segment contains
+                        // globs, extended globs, or malformed extended globs.
+                        //
+                        // the information from the RegExp can still be salvaged to build the find path in some scenarios:
+                        //
+                        // the escape character '\' is not supported on Windows, and a workaround is to use brackets to escape a character.
+                        // e.g. '+(hello)' => '[+](hello)'. detecting this escaping-workaround allows the glob to potentially be used to build
+                        // the findPath.
+                        //
+                        // malformed extended globs are useful since they can be used to build the find path. they can be easily detected
+                        // since the final regex produced by minimatch is the result of regex-escaping the glob-unescaped-original-input
+                        // for the path segment.
+
+                        // undo the bracket-workaround due to '\' not supported escape character on Windows
+                        // e.g. '[a]'      => '\\a'
+                        //      'b[a]'     => 'b\\a'
+                        //      'b\\\\[a]' => 'b\\\\\\a'    // even number of preceeding '\\'
+                        //      'b\\[a]'   => 'b\\[a]'      // odd number of preceeding '\\' not replaced
+                        let glob = parsedSegment._glob as string;
+                        let previousLength: number;
+                        do {
+                            // global replace won't work because consecutive matches overlap
+                            // e.g. global replace on '[a][b][c]' would yield '\\a[b]\\c' instead of '\\a\\b\\c'
+                            previousLength = glob.length;
+                            glob = glob.replace(/((?:^|[^\\])(?:\\\\)*)\[([^\\])\]/, '$1\\$2');
+                        }
+                        while (glob.length != previousLength);
+
+                        // unescape the input glob, e.g. 'hello+(world\\)' => 'hello+(world)'
+                        let unescapedGlob: string = glob.replace(/\\(.)/g, '$1');
+
+                        // undo the bracket-workaround within the regex too.
+                        // e.g. 'hello[a]'   => 'helloa'
+                        //      'hello[\\[]' => 'hello\\['
+                        //
+                        // note, '._src' contains the regex pattern used by minimatch, although with the leading ^ and trailing $ omitted.
+                        //
+                        // also note, '._src' always begins with '(?=.)', which serves as a positive lookahead when ^ is ultimately prepended.
+                        // the lookahead asserts that at least one character exists in the path segment.
+                        let regexPattern = parsedSegment._src as string;
+                        do {
+                            // global replace won't work because consecutive matches overlap
+                            // e.g. global replace on 'hello[a][b][c]' would yield 'helloa[b]c' instead of 'helloabc'
+                            previousLength = regexPattern.length;
+                            regexPattern = regexPattern.replace(
+                                /([^\\](?:\\\\)*)\[(?:([^\\])|\\(.))\]/,
+                                (substring: string, p1: string, p2: string) => {
+                                    return p1 + minimatch_regExpEscape(p2);
+                                });
+                        }
+                        while (regexPattern.length != previousLength);
+
+                        if ('(?=.)' + minimatch_regExpEscape(unescapedGlob) == regexPattern) {
+                            // the segment can be used to build the findPath
                             findPath += unescapedGlob + '/';
                             continue;
                         }
 
-                        // the RegExp contains a glob or valid extended glob. it cannot be used to further build the findPath.
+                        // the segment contains a glob or valid extended glob
+                        // it cannot be appended to the findPath
                         statOnly = false;
                         break;
                     }
@@ -1285,8 +1345,7 @@ export function findAndMatch(
                 }
                 else {
                     // root the exclude pattern
-                    pattern = normalizeAndEnsureRooted(defaultRoot, pattern);
-                    pattern = process.platform == 'win32' ? pattern.replace(/\\/g, '/') : pattern; // convert slashes
+                    pattern = normalizeAndEnsureRooted(escapedDefaultRoot, pattern);
                 }
 
                 let matchResults: string[] = minimatch.match(
@@ -1304,6 +1363,14 @@ export function findAndMatch(
     return Object.keys(results)
         .map((key: string) => results[key])
         .sort();
+}
+
+/**
+ * Applies the exact RegExp escaping rules that minimatch applies. This is useful for scenarios where
+ * an attempt is made to interpret a literal string pattern from a minimatch-parsed path segment.
+ */
+function minimatch_regExpEscape(s: string): string {
+    return s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&'); // same escaping that minimatch uses
 }
 
 function normalizeAndEnsureRooted(root: string, p: string) {
