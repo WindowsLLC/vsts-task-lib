@@ -3,7 +3,6 @@ import shell = require('shelljs');
 import fs = require('fs');
 import path = require('path');
 import os = require('os');
-import braceexpansion = require('braceexpansion');
 import minimatch = require('minimatch');
 import globm = require('glob');
 import util = require('util');
