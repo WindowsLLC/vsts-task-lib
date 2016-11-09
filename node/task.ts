@@ -1159,11 +1159,10 @@ export interface FindOptions {
 }
 
 /**
- * Find all files under a give path 
- * Returns an array of paths
- * 
- * @param     findPath     path to find files under
- * @param     options      options to control whether to follow symlinks
+ * Recursively finds all paths a given path. Returns an array of paths.
+ *
+ * @param     findPath  path to search
+ * @param     options   optional. defaults to { followSymbolicLinks: true }. following soft links is generally appropriate unless deleting files.
  * @returns   string[]
  */
 export function find(findPath: string, options?: FindOptions): string[] {
@@ -1643,6 +1642,14 @@ export interface MatchOptions {
     flipNegate?: boolean;
 }
 
+/**
+ * Applies glob patterns to a list of paths. Supports interleaved exclude patterns.
+ *
+ * @param  list      array of paths
+ * @param  pattern   pattern to apply
+ * @param  patterns  patterns to apply. supports interleaved exclude patterns.
+ * @param  options   optional. defaults to { dot: true, nobrace: true, nocase: process.platform == 'win32' }.
+ */
 export function match(list: string[], pattern: string, options?: MatchOptions): string[];
 export function match(list: string[], patterns: string[], options?: MatchOptions): string[];
 export function match(list: string[], pattern: any, options?: MatchOptions): string[] {
@@ -1743,6 +1750,12 @@ export function match(list: string[], pattern: any, options?: MatchOptions): str
     return result;
 }
 
+/**
+ * Filter to apply glob patterns
+ *
+ * @param  pattern  pattern to apply
+ * @param  options  optional. defaults to { dot: true, nobrace: true, nocase: process.platform == 'win32' }.
+ */
 export function filter(pattern: string, options?: MatchOptions): (element: string, indexed: number, array: string[]) => boolean {
     options = options || getDefaultMatchOptions();
     return minimatch.filter(pattern, options);
@@ -1795,15 +1808,15 @@ function getDefaultMatchOptions(): MatchOptions {
 }
 
 /**
- * Determines the find root from a list of patterns. Performs the find and then applies the pattern(s).
+ * Determines the find root from a list of patterns. Performs the find and then applies the glob patterns.
  * Supports interleaved exclude patterns. Unrooted patterns are rooted using defaultRoot, unless
- * matchOptions.matchBase is specified and the pattern is a basename only. For matchBase cases,
- * the defaultRoot is used as the find root.
- * 
- * @param  defaultRoot   Default path to root unrooted patterns. Falls back to System.DefaultWorkingDirectory or process.cwd().
- * @param  patterns      Array of patterns to apply.
- * @param  findOptions   Defaults to { followSymbolicLinks: true }. Following soft links is generally appropriate unless deleting files.
- * @param  matchOptions  Defaults to { dot: true, nobrace: true, nocase: process.platform == 'win32' }.
+ * matchOptions.matchBase is specified and the pattern is a basename only. For matchBase cases, the
+ * defaultRoot is used as the find root.
+ *
+ * @param  defaultRoot   default path to root unrooted patterns. falls back to System.DefaultWorkingDirectory or process.cwd().
+ * @param  patterns      array of patterns to apply
+ * @param  findOptions   defaults to { followSymbolicLinks: true }. following soft links is generally appropriate unless deleting files.
+ * @param  matchOptions  defaults to { dot: true, nobrace: true, nocase: process.platform == 'win32' }
  */
 export function findAndMatch(
     defaultRoot: string,
