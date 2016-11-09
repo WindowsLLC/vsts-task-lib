@@ -1262,6 +1262,18 @@ class FindItem {
     }
 }
 
+function debugFindOptions(options: FindOptions): void {
+    debug(`findOptions.followSpecifiedSymbolicLink: '${options.followSpecifiedSymbolicLink}'`);
+    debug(`findOptions.followSymbolicLinks: '${options.followSymbolicLinks}'`);
+}
+
+function getDefaultFindOptions(): FindOptions {
+    return <FindOptions>{
+        followSpecifiedSymbolicLink: true,
+        followSymbolicLinks: true
+    };
+}
+
 /**
  * Prefer tl.find() and tl.match() instead. This function is for backward compatibility
  * when porting tasks to Node from the PowerShell or PowerShell3 execution handler.
@@ -1505,6 +1517,7 @@ export function rmRF(path: string, continueOnError?: boolean): void {
     }
 }
 
+/** Deprecated use findAndMatch() */
 export function glob(pattern: string): string[] {
     debug('glob ' + pattern);
     var matches: string[] = globm.sync(pattern);
@@ -1525,6 +1538,7 @@ export function glob(pattern: string): string[] {
     return matches;
 }
 
+/** Deprecated use findAndMatch() */
 export function globFirst(pattern: string): string {
     debug('globFirst ' + pattern);
     var matches = glob(pattern);
@@ -1632,8 +1646,9 @@ export interface MatchOptions {
 export function match(list: string[], pattern: string, options?: MatchOptions): string[];
 export function match(list: string[], patterns: string[], options?: MatchOptions): string[];
 export function match(list: string[], pattern: any, options?: MatchOptions): string[] {
-    debug(`match patterns: ${pattern}`);
-    debug(`match options: ${options}`);
+    // get default options
+    options = options || getDefaultMatchOptions();
+    debugMatchOptions(options);
 
     // convert pattern to an array
     let patterns: string[];
@@ -1647,182 +1662,90 @@ export function match(list: string[], pattern: any, options?: MatchOptions): str
     // hashtable to keep track of matches
     let map: { [item: string]: boolean } = {};
 
-    // perform the match
+    let originalOptions = options;
     for (let pattern of patterns) {
-        debug(`applying pattern: ${pattern}`);
-        let matches: string[] = minimatch.match(list, pattern, options);
-        debug(`matched ${matches.length} items`);
-        for (let item of matches) {
-            map[item] = true;
-        }
-    }
+        debug(`pattern: '${pattern}'`);
 
-    // return a filtered version of the original list (preserves order and prevents duplication)
-    return list.filter((item: string) => map.hasOwnProperty(item));
-}
-
-export function filter(pattern: string, options?: MatchOptions): (element: string, indexed: number, array: string[]) => boolean {
-    return minimatch.filter(pattern, options);
-}
-
-export function findAndMatch(
-    defaultRoot: string,
-    patterns: string[],
-    findOptions?: FindOptions,
-    matchOptions?: MatchOptions) : string[] {
-
-    // apply defaults for parameters and trace
-    defaultRoot = defaultRoot || getInput('System.DefaultWorkingDirectory') || process.cwd();
-    debug(`defaultRoot: '${defaultRoot}'`);
-    patterns = patterns || [];
-    patterns.forEach((pattern: string, index: number) => {
-        debug(`pattern[${index}]: '${pattern}'`);
-    });
-
-    findOptions = findOptions || <FindOptions>{ followSymbolicLinks: true };
-    Object.keys(findOptions).forEach((key: string) => {
-        debug(`findOptions['${key}']: '${findOptions[key]}'`);
-    });
-
-    matchOptions = matchOptions || <MatchOptions>{
-        dot: true,
-        nobrace: true,
-        nocase: process.platform == 'win32'
-    };
-    Object.keys(matchOptions).forEach((key: string) => {
-        debug(`matchOptions['${key}']: '${matchOptions[key]}'`);
-    });
-
-    // normalize slashes for root dir
-    defaultRoot = normalizePath(defaultRoot);
-
-    let results: { [key: string]: string };
-    let originalMatchOptions = matchOptions;
-    for (let pattern of patterns) {
         // trim and skip empty
         pattern = (pattern || '').trim();
         if (!pattern) {
+            debug('skipping empty pattern');
             continue;
         }
 
         // clone match options
-        let matchOptions = cloneMatchOptions(originalMatchOptions);
+        let options = cloneMatchOptions(originalOptions);
 
         // skip comments
-        if (!matchOptions.nocomment && pattern.startsWith('#')) {
-            debug(`skipping comment: '${pattern}'`);
+        if (!options.nocomment && pattern.startsWith('#')) {
+            debug('skipping comment');
             continue;
         }
 
-        // set nocomment - brace expansion could result in a leading '#'
-        matchOptions.nocomment = true;
+        // set nocomment
+        options.nocomment = true;
 
         // determine whether pattern is include or exclude
         let negateCount = 0;
-        if (!matchOptions.nonegate) {
+        if (!options.nonegate) {
             while (pattern.charAt(negateCount) == '!') {
                 negateCount++;
             }
 
             pattern = pattern.substring(negateCount); // trim leading '!'
+            if (negateCount) {
+                debug(`trimmed leading '!'. pattern: '${pattern}'`);
+            }
         }
 
         let isIncludePattern = negateCount == 0 ||
-            (negateCount % 2 == 0 && !matchOptions.flipNegate) ||
-            (negateCount % 2 == 1 && matchOptions.flipNegate);
+            (negateCount % 2 == 0 && !options.flipNegate) ||
+            (negateCount % 2 == 1 && options.flipNegate);
 
         // set nonegate - brace expansion could result in a leading '!'
-        matchOptions.nonegate = true;
+        options.nonegate = true;
+        options.flipNegate = false;
 
-        // expand braces - required to accurately interpret findPath
-        let expanded: string[];
-        if (matchOptions.nobrace) {
-            expanded = [ pattern ];
+        // trim and skip empty
+        pattern = (pattern || '').trim();
+        if (!pattern) {
+            debug('skipping empty pattern');
+            continue;
+        }
+
+        if (isIncludePattern) {
+            // apply the pattern
+            debug('applying include pattern against original list');
+            let matchResults: string[] = minimatch.match(list, pattern, options);
+            debug(matchResults.length + ' matches');
+
+            // union the results
+            for (let matchResult of matchResults) {
+                map[matchResult] = true;
+            }
         }
         else {
-            // convert slashes on Windows before calling braceExpand(). unfortunately this means braces cannot
-            // be escaped on Windows, this limitation is consistent with current limitations of minimatch (3.0.3).
-            let convertedPattern = process.platform == 'win32' ? pattern.replace(/\\/g, '/') : pattern;
-            expanded = (minimatch as any).braceExpand(convertedPattern);
-        }
+            // apply the pattern
+            debug('applying exclude pattern against original list');
+            let matchResults: string[] = minimatch.match(list, pattern, options);
+            debug(matchResults.length + ' matches');
 
-        // set nobrace
-        matchOptions.nobrace = true;
-
-        for (let pattern of expanded) {
-            // trim and skip empty
-            pattern = (pattern || '').trim();
-            if (!pattern) {
-                continue;
-            }
-
-            if (isIncludePattern) {
-                // determine the findPath
-                let findRootInfo: PatternFindRootInfo = getFindRootFromPattern(defaultRoot, pattern, matchOptions);
-                let findPath: string = findRootInfo.path;
-
-                if (!findPath) {
-                    continue;
-                }
-
-                // perform the find
-                let findResults: string[] = [];
-                if (findRootInfo.allSegmentsLiteral) {
-                    // simply stat the path - all path segments were used to build the path
-                    try {
-                        fs.statSync(findPath);
-                        findResults.push(findPath);
-                    }
-                    catch (err) {
-                        if (err.code != 'ENOENT') {
-                            throw err;
-                        }
-                    }
-                }
-                else {
-                    findResults = find(findPath, findOptions);
-                }
-
-                // apply the pattern
-                let matchResults: string[] = minimatch.match(findResults, pattern, matchOptions);
-
-                // union the results
-                for (let matchResult of matchResults) {
-                    let key = process.platform == 'win32' ? matchResult.toUpperCase() : matchResult;
-                    results[key] = matchResult;
-                }
-            }
-            else {
-                // check if basename only and matchBase=true
-                if (matchOptions.matchBase &&
-                    !isRooted(pattern) &&
-                    (process.platform == 'win32' ? pattern.replace(/\\/g, '/') : pattern).indexOf('/') < 0) {
-
-                    // do not root the pattern
-                }
-                else {
-                    // root the exclude pattern
-                    pattern = ensurePatternRooted(defaultRoot, pattern);
-                }
-
-                // apply the pattern
-                let matchResults: string[] = minimatch.match(
-                    Object.keys(results).map((key: string) => results[key]),
-                    pattern,
-                    matchOptions);
-
-                // substract the results
-                for (let matchResult of matchResults) {
-                    let key = process.platform == 'win32' ? matchResult.toUpperCase() : matchResult;
-                    delete results[key];
-                }
+            // substract the results
+            for (let matchResult of matchResults) {
+                delete map[matchResult];
             }
         }
     }
 
-    return Object.keys(results)
-        .map((key: string) => results[key])
-        .sort();
+    // return a filtered version of the original list (preserves order and prevents duplication)
+    let result: string[] = list.filter((item: string) => map.hasOwnProperty(item));
+    debug(result.length + ' final results');
+    return result;
+}
+
+export function filter(pattern: string, options?: MatchOptions): (element: string, indexed: number, array: string[]) => boolean {
+    options = options || getDefaultMatchOptions();
+    return minimatch.filter(pattern, options);
 }
 
 function cloneMatchOptions(matchOptions: MatchOptions): MatchOptions {
@@ -1841,12 +1764,216 @@ function cloneMatchOptions(matchOptions: MatchOptions): MatchOptions {
     };
 }
 
+function debugMatchOptions(options: MatchOptions): void {
+    debug(`matchOptions.debug: '${options.debug}'`);
+    debug(`matchOptions.nobrace: '${options.nobrace}'`);
+    debug(`matchOptions.noglobstar: '${options.noglobstar}'`);
+    debug(`matchOptions.dot: '${options.dot}'`);
+    debug(`matchOptions.noext: '${options.noext}'`);
+    debug(`matchOptions.nocase: '${options.nocase}'`);
+    debug(`matchOptions.nonull: '${options.nonull}'`);
+    debug(`matchOptions.matchBase: '${options.matchBase}'`);
+    debug(`matchOptions.nocomment: '${options.nocomment}'`);
+    debug(`matchOptions.nonegate: '${options.nonegate}'`);
+    debug(`matchOptions.flipNegate: '${options.flipNegate}'`);
+}
+
+function getDefaultMatchOptions(): MatchOptions {
+    return <MatchOptions>{
+        debug: false,
+        nobrace: true,
+        noglobstar: false,
+        dot: true,
+        noext: false,
+        nocase: process.platform == 'win32',
+        nonull: false,
+        matchBase: false,
+        nocomment: false,
+        nonegate: false,
+        flipNegate: false
+    };
+}
+
 /**
- * Applies the exact RegExp escaping rules that minimatch applies. This is useful for scenarios where
- * an attempt is made to interpret a literal string pattern from a minimatch-parsed path segment.
+ * Determines the find root from a list of patterns. Performs the find and then applies the pattern(s).
+ * Supports interleaved exclude patterns. Unrooted patterns are rooted using defaultRoot, unless
+ * matchOptions.matchBase is specified and the pattern is a basename only. For matchBase cases,
+ * the defaultRoot is used as the find root.
+ * 
+ * @param  defaultRoot   Default path to root unrooted patterns. Falls back to System.DefaultWorkingDirectory or process.cwd().
+ * @param  patterns      Array of patterns to apply.
+ * @param  findOptions   Defaults to { followSymbolicLinks: true }. Following soft links is generally appropriate unless deleting files.
+ * @param  matchOptions  Defaults to { dot: true, nobrace: true, nocase: process.platform == 'win32' }.
  */
-function minimatch_regExpEscape(s: string): string {
-    return s.replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&'); // same escaping that minimatch uses
+export function findAndMatch(
+    defaultRoot: string,
+    patterns: string[],
+    findOptions?: FindOptions,
+    matchOptions?: MatchOptions) : string[] {
+
+    // apply defaults for parameters and trace
+    defaultRoot = defaultRoot || getInput('System.DefaultWorkingDirectory') || process.cwd();
+    debug(`defaultRoot: '${defaultRoot}'`);
+    findOptions = findOptions || getDefaultFindOptions();
+    debugFindOptions(findOptions);
+    matchOptions = matchOptions || getDefaultMatchOptions();
+    debugMatchOptions(matchOptions);
+
+    // normalize slashes for root dir
+    defaultRoot = normalizePath(defaultRoot);
+
+    let results: { [key: string]: string };
+    let originalMatchOptions = matchOptions;
+    for (let pattern of (patterns || [])) {
+        debug(`pattern: '${pattern}'`);
+
+        // trim and skip empty
+        pattern = (pattern || '').trim();
+        if (!pattern) {
+            debug('skipping empty pattern');
+            continue;
+        }
+
+        // clone match options
+        let matchOptions = cloneMatchOptions(originalMatchOptions);
+
+        // skip comments
+        if (!matchOptions.nocomment && pattern.startsWith('#')) {
+            debug('skipping comment');
+            continue;
+        }
+
+        // set nocomment - brace expansion could result in a leading '#'
+        matchOptions.nocomment = true;
+
+        // determine whether pattern is include or exclude
+        let negateCount = 0;
+        if (!matchOptions.nonegate) {
+            while (pattern.charAt(negateCount) == '!') {
+                negateCount++;
+            }
+
+            pattern = pattern.substring(negateCount); // trim leading '!'
+            if (negateCount) {
+                debug(`trimmed leading '!'. pattern: '${pattern}'`);
+            }
+        }
+
+        let isIncludePattern = negateCount == 0 ||
+            (negateCount % 2 == 0 && !matchOptions.flipNegate) ||
+            (negateCount % 2 == 1 && matchOptions.flipNegate);
+
+        // set nonegate - brace expansion could result in a leading '!'
+        matchOptions.nonegate = true;
+        matchOptions.flipNegate = false;
+
+        // expand braces - required to accurately interpret findPath
+        let expanded: string[];
+        if (matchOptions.nobrace) {
+            expanded = [ pattern ];
+        }
+        else {
+            // convert slashes on Windows before calling braceExpand(). unfortunately this means braces cannot
+            // be escaped on Windows, this limitation is consistent with current limitations of minimatch (3.0.3).
+            debug('expanding braces');
+            let convertedPattern = process.platform == 'win32' ? pattern.replace(/\\/g, '/') : pattern;
+            expanded = (minimatch as any).braceExpand(convertedPattern);
+        }
+
+        // set nobrace
+        matchOptions.nobrace = true;
+
+        for (let pattern of expanded) {
+            debug(`pattern: '${pattern}'`);
+
+            // trim and skip empty
+            pattern = (pattern || '').trim();
+            if (!pattern) {
+                debug('skipping empty pattern');
+                continue;
+            }
+
+            if (isIncludePattern) {
+                // determine the findPath
+                let findRootInfo: PatternFindRootInfo = getFindRootFromPattern(defaultRoot, pattern, matchOptions);
+                let findPath: string = findRootInfo.path;
+                debug(`findPath: '${findPath}'`);
+                debug(`allSegmentsLiteral: '${findRootInfo.allSegmentsLiteral}'`);
+
+                if (!findPath) {
+                    debug('skipping empty path');
+                    continue;
+                }
+
+                // perform the find
+                let findResults: string[] = [];
+                if (findRootInfo.allSegmentsLiteral) {
+                    // simply stat the path - all path segments were used to build the path
+                    try {
+                        fs.statSync(findPath);
+                        findResults.push(findPath);
+                    }
+                    catch (err) {
+                        if (err.code != 'ENOENT') {
+                            throw err;
+                        }
+
+                        debug('ENOENT');
+                    }
+                }
+                else {
+                    findResults = find(findPath, findOptions);
+                }
+
+                // apply the pattern
+                debug(`found ${findResults.length} paths`);
+                debug('applying include pattern');
+                let matchResults: string[] = minimatch.match(findResults, pattern, matchOptions);
+                debug(matchResults.length + ' matches');
+
+                // union the results
+                for (let matchResult of matchResults) {
+                    let key = process.platform == 'win32' ? matchResult.toUpperCase() : matchResult;
+                    results[key] = matchResult;
+                }
+            }
+            else {
+                // check if basename only and matchBase=true
+                if (matchOptions.matchBase &&
+                    !isRooted(pattern) &&
+                    (process.platform == 'win32' ? pattern.replace(/\\/g, '/') : pattern).indexOf('/') < 0) {
+
+                    // do not root the pattern
+                    debug('matchBase and basename only');
+                }
+                else {
+                    // root the exclude pattern
+                    pattern = ensurePatternRooted(defaultRoot, pattern);
+                    debug(`after ensurePatternRooted, pattern: '${pattern}'`);
+                }
+
+                // apply the pattern
+                debug('applying exclude pattern');
+                let matchResults: string[] = minimatch.match(
+                    Object.keys(results).map((key: string) => results[key]),
+                    pattern,
+                    matchOptions);
+                debug(matchResults + ' matches');
+
+                // substract the results
+                for (let matchResult of matchResults) {
+                    let key = process.platform == 'win32' ? matchResult.toUpperCase() : matchResult;
+                    delete results[key];
+                }
+            }
+        }
+    }
+
+    let finalResult: string[] = Object.keys(results)
+        .map((key: string) => results[key])
+        .sort();
+    debug(finalResult.length + ' final results');
+    return finalResult;
 }
 
 interface PatternFindRootInfo {
