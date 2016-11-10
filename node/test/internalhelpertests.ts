@@ -26,6 +26,94 @@ describe('Internal Path Helper Tests', function () {
     after(function () {
     });
 
+    function assertEnsureRooted(root: string, path: string, expected: string): void {
+        assert.equal(
+            tl._internal['ensureRooted'](root, path),
+            expected,
+            `expected ensureRooted for input <${path}> to yield <${expected}>`);
+    }
+
+    it('ensureRooted roots paths', (done: MochaDone) => {
+        this.timeout(1000);
+
+        if (process.platform == 'win32') {
+            // already rooted - drive root
+            assertEnsureRooted('D:\\', 'C:/', 'C:/');
+            assertEnsureRooted('D:\\', 'a:/hello', 'a:/hello');
+            assertEnsureRooted('D:\\', 'C:\\', 'C:\\');
+            assertEnsureRooted('D:\\', 'C:\\hello', 'C:\\hello');
+
+            // already rooted - relative drive root
+            assertEnsureRooted('D:\\', 'C:', 'C:');
+            assertEnsureRooted('D:\\', 'C:hello', 'C:hello');
+            assertEnsureRooted('D:\\', 'C:hello/world', 'C:hello/world');
+            assertEnsureRooted('D:\\', 'C:hello\\world', 'C:hello\\world');
+
+            // already rooted - current drive root
+            assertEnsureRooted('D:\\', '/', '/');
+            assertEnsureRooted('D:\\', '/hello', '/hello');
+            assertEnsureRooted('D:\\', '\\', '\\');
+            assertEnsureRooted('D:\\', '\\hello', '\\hello');
+
+            // already rooted - UNC
+            assertEnsureRooted('D:\\', '//machine/share', '//machine/share');
+            assertEnsureRooted('D:\\', '\\\\machine\\share', '\\\\machine\\share');
+
+            // relative
+            assertEnsureRooted('D:', 'hello', 'D:hello');
+            assertEnsureRooted('D:/', 'hello', 'D:/hello');
+            assertEnsureRooted('D:/', 'hello/world', 'D:/hello/world');
+            assertEnsureRooted('D:\\', 'hello', 'D:\\hello');
+            assertEnsureRooted('D:\\', 'hello\\world', 'D:\\hello\\world');
+            assertEnsureRooted('D:/root', 'hello', 'D:/root\\hello');
+            assertEnsureRooted('D:/root', 'hello/world', 'D:/root\\hello/world');
+            assertEnsureRooted('D:\\root', 'hello', 'D:\\root\\hello');
+            assertEnsureRooted('D:\\root', 'hello\\world', 'D:\\root\\hello\\world');
+            assertEnsureRooted('D:/root/', 'hello', 'D:/root/hello');
+            assertEnsureRooted('D:/root/', 'hello/world', 'D:/root/hello/world');
+            assertEnsureRooted('D:\\root\\', 'hello', 'D:\\root\\hello');
+            assertEnsureRooted('D:\\root\\', 'hello\\world', 'D:\\root\\hello\\world');
+        }
+        else {
+            // already rooted
+            assertEnsureRooted('/root', '/', '/');
+            assertEnsureRooted('/root', '/hello', '/hello');
+            assertEnsureRooted('/root', '/hello/world', '/hello/world');
+
+            // not already rooted - Windows style drive root
+            assertEnsureRooted('/root', 'C:/', '/root/C:/');
+            assertEnsureRooted('/root', 'C:/hello', '/root/C:/hello');
+            assertEnsureRooted('/root', 'C:\\', '/root/C:\\');
+
+            // not already rooted - Windows style relative drive root
+            assertEnsureRooted('/root', 'C:', '/root/C:');
+            assertEnsureRooted('/root', 'C:hello/world', '/root/C:hello/world');
+
+            // not already rooted - Windows style current drive root
+            assertEnsureRooted('/root', '\\', '/root/\\');
+            assertEnsureRooted('/root', '\\hello\\world', '/root/\\hello\\world');
+
+            // not already rooted - Windows style UNC
+            assertEnsureRooted('/root', '\\\\machine\\share', '/root/\\\\machine\\share');
+
+            // not already rooted - relative
+            assertEnsureRooted('/', 'hello', '/hello');
+            assertEnsureRooted('/', 'hello/world', '/hello/world');
+            assertEnsureRooted('/', 'hello\\world', '/hello\\world');
+            assertEnsureRooted('/root', 'hello', '/root/hello');
+            assertEnsureRooted('/root', 'hello/world', '/root/hello/world');
+            assertEnsureRooted('/root', 'hello\\world', '/root/hello\\world');
+            assertEnsureRooted('/root/', 'hello', '/root/hello');
+            assertEnsureRooted('/root/', 'hello/world', '/root/hello/world');
+            assertEnsureRooted('/root/', 'hello\\world', '/root/hello\\world');
+            assertEnsureRooted('/root\\', 'hello', '/root\\/hello');
+            assertEnsureRooted('/root\\', 'hello/world', '/root\\/hello/world');
+            assertEnsureRooted('/root\\', 'hello\\world', '/root\\/hello\\world');
+        }
+
+        done();
+    });
+
     function assertDirectoryName(path: string, expected: string): void {
         assert.equal(
             tl._internal['getDirectoryName'](path),
@@ -33,7 +121,7 @@ describe('Internal Path Helper Tests', function () {
             `expected getDirectoryName for input <${path}> to yield <${expected}>`);
     }
 
-    it('interprets directory name from paths', (done: MochaDone) => {
+    it('getDirectoryName interprets directory name from paths', (done: MochaDone) => {
         this.timeout(1000);
 
         assertDirectoryName(null, '');
@@ -157,7 +245,7 @@ describe('Internal Path Helper Tests', function () {
             `expected isRooted for input <${path}> to yield <${expected}>`);
     }
 
-    it('detects is rooted', (done: MochaDone) => {
+    it('isRooted detects root', (done: MochaDone) => {
         this.timeout(1000);
 
         if (process.platform == 'win32') {

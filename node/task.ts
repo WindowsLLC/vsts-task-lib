@@ -64,175 +64,6 @@ export function setErrStream(errStream): void {
     _errStream = errStream;
 }
 
-//--------------------------------------------------------------------------------
-// Internal path helpers. Handles cases on Windows that path.___ functions miss.
-//--------------------------------------------------------------------------------
-export var _internal = {};
-
-/**
- * On OSX/Linux, true if path starts with '/'. On Windows, true for paths like:
- * \, \hello, \\hello\share, C:, and C:\hello (and corresponding alternate separator cases).
- */
-function isRooted(p: string): boolean {
-    p = normalizePath(p);
-    if (!p) {
-        throw new Error('isRooted() parameter "p" cannot be empty');
-    }
-
-    if (process.platform == 'win32') {
-        return p.startsWith('\\') || // e.g. \ or \hello or \\hello
-            /^[A-Z]:/i.test(p);      // e.g. C: or C:\hello
-    }
-
-    return p.startsWith('/'); // e.g. /hello
-}
-_internal['isRooted'] = isRooted;
-
-function normalizePath(p: string): string {
-    p = p || '';
-    if (process.platform == 'win32') {
-        // convert slashes on Windows
-        p = p.replace(/\//g, '\\');
-
-        // remove redundant slashes
-        let isUnc = /^\\\\+[^\\]/.test(p); // e.g. \\hello
-        return (isUnc ? '\\' : '') + p.replace(/\\\\+/g, '\\'); // preserve leading // for UNC
-    }
-
-    // remove redundant slashes
-    return p.replace(/\/\/+/g, '/');
-}
-_internal['normalizePath'] = normalizePath;
-
-function ensureRooted(root: string, p: string) {
-    if (!root) {
-        throw new Error('ensureRooted() parameter "root" cannot be empty');
-    }
-
-    if (!p) {
-        throw new Error('ensureRooted() parameter "p" cannot be empty');
-    }
-
-    if (isRooted(p)) {
-        return p;
-    }
-
-    if (process.platform == 'win32' && root.match(/^[A-Z]:$/i)) { // e.g. C:
-        return root + p;
-    }
-
-    // ensure root ends with a separator
-    if (root.endsWith('/') || (process.platform == 'win32' && root.endsWith('\\'))) {
-        // root already ends with a separator
-    }
-    else {
-        root += path.sep; // append separator
-    }
-
-    return root + p;
-}
-_internal['ensureRooted'] = ensureRooted;
-
-/**
- * Determines the parent path and trims trailing slashes (when safe). Path separators are normalized
- * in the result. This function works similar to the .NET System.IO.Path.GetDirectoryName() method.
- * For example, C:\hello\world\ returns C:\hello\world (trailing slash removed). Returns empty when
- * no higher directory can be determined.
- */
-function getDirectoryName(p: string): string {
-    // short-circuit if empty
-    if (!p) {
-        return '';
-    }
-
-    // convert slashes on Windows
-    p = process.platform == 'win32' ? p.replace(/\\/g, '/') : p;
-
-    // remove redundant slashes since Path.GetDirectoryName() does
-    let isUnc = process.platform == 'win32' && /^\/\/+[^\/]/.test(p); // e.g. //hello
-    p = (isUnc ? '/' : '') + p.replace(/\/\/+/g, '/'); // preserve leading // for UNC on Windows
-
-    // on Windows, the goal of this function is to match the behavior of
-    // [System.IO.Path]::GetDirectoryName(), e.g.
-    //      C:/             =>
-    //      C:/hello        => C:\
-    //      C:/hello/       => C:\hello
-    //      C:/hello/world  => C:\hello
-    //      C:/hello/world/ => C:\hello\world
-    //      C:              =>
-    //      C:hello         => C:
-    //      C:hello/        => C:hello
-    //      /               =>
-    //      /hello          => \
-    //      /hello/         => \hello
-    //      //hello         =>
-    //      //hello/        =>
-    //      //hello/world   =>
-    //      //hello/world/  => \\hello\world
-    //
-    // unfortunately, path.dirname() can't simply be used. for example, on Windows
-    // it yields different results from Path.GetDirectoryName:
-    //      C:/             => C:/
-    //      C:/hello        => C:/
-    //      C:/hello/       => C:/
-    //      C:/hello/world  => C:/hello
-    //      C:/hello/world/ => C:/hello
-    //      C:              => C:
-    //      C:hello         => C:
-    //      C:hello/        => C:
-    //      /               => /
-    //      /hello          => /
-    //      /hello/         => /
-    //      //hello         => /
-    //      //hello/        => /
-    //      //hello/world   => //hello/world
-    //      //hello/world/  => //hello/world/
-    //      //hello/world/again => //hello/world/
-    //      //hello/world/again/ => //hello/world/
-    //      //hello/world/again/again => //hello/world/again
-    //      //hello/world/again/again/ => //hello/world/again
-    if (process.platform == 'win32') {
-        if (/^[A-Z]:\/?[^\/]+$/i.test(p)) { // e.g. C:/hello or C:hello
-            return p.charAt(2) == '/' ? p.substring(0, 3) : p.substring(0, 2);
-        }
-        else if (/^[A-Z]:\/?$/i.test(p)) { // e.g. C:/ or C:
-            return '';
-        }
-
-        let lastSlashIndex = p.lastIndexOf('/');
-        if (lastSlashIndex < 0) { // file name only
-            return '';
-        }
-        else if (p == '/') { // relative root
-            return '';
-        }
-        else if (lastSlashIndex == 0) { // e.g. /hello
-            return '/';
-        }
-        else if (/^\/\/[^\/]+(\/[^\/]*)?$/.test(p)) { // UNC root, e.g. //hello or //hello/ or //hello/world
-            return '';
-        }
-
-        return p.substring(0, lastSlashIndex);  // e.g. hello/world => hello or hello/world/ => hello/world
-                                                // note, this means trailing slashes for non-root directories
-                                                // (i.e. not C:/, /, or //unc/) will simply be removed.
-    }
-
-    // OSX/Linux
-    if (p.indexOf('/') < 0) { // file name only
-        return '';
-    }
-    else if (p == '/') {
-        return '';
-    }
-    else if (p.endsWith('/')) {
-        return p.substring(0, p.length - 1);
-    }
-
-    return path.dirname(p);
-}
-_internal['getDirectoryName'] = getDirectoryName;
-
 //-----------------------------------------------------
 // Results
 //-----------------------------------------------------
@@ -1516,7 +1347,7 @@ export function rmRF(path: string, continueOnError?: boolean): void {
     }
 }
 
-/** Deprecated use findAndMatch() */
+/** Deprecated, use findAndMatch() */
 export function glob(pattern: string): string[] {
     debug('glob ' + pattern);
     var matches: string[] = globm.sync(pattern);
@@ -1537,7 +1368,7 @@ export function glob(pattern: string): string[] {
     return matches;
 }
 
-/** Deprecated use findAndMatch() */
+/** Deprecated, use findAndMatch() */
 export function globFirst(pattern: string): string {
     debug('globFirst ' + pattern);
     var matches = glob(pattern);
@@ -1814,15 +1645,11 @@ function getDefaultMatchOptions(): MatchOptions {
  * defaultRoot is used as the find root.
  *
  * @param  defaultRoot   default path to root unrooted patterns. falls back to System.DefaultWorkingDirectory or process.cwd().
- * @param  patterns      array of patterns to apply
+ * @param  patterns      pattern or array of patterns to apply
  * @param  findOptions   defaults to { followSymbolicLinks: true }. following soft links is generally appropriate unless deleting files.
  * @param  matchOptions  defaults to { dot: true, nobrace: true, nocase: process.platform == 'win32' }
  */
-export function findAndMatch(
-    defaultRoot: string,
-    patterns: string[],
-    findOptions?: FindOptions,
-    matchOptions?: MatchOptions) : string[] {
+export function findAndMatch(defaultRoot: string, patterns: string[] | string, findOptions?: FindOptions, matchOptions?: MatchOptions) : string[] {
 
     // apply defaults for parameters and trace
     defaultRoot = defaultRoot || getInput('System.DefaultWorkingDirectory') || process.cwd();
@@ -1833,9 +1660,9 @@ export function findAndMatch(
     debugMatchOptions(matchOptions);
 
     // normalize slashes for root dir
-    defaultRoot = normalizePath(defaultRoot);
+    defaultRoot = normalizeSeparators(defaultRoot);
 
-    let results: { [key: string]: string };
+    let results: { [key: string]: string } = { };
     let originalMatchOptions = matchOptions;
     for (let pattern of (patterns || [])) {
         debug(`pattern: '${pattern}'`);
@@ -2080,7 +1907,7 @@ function getFindRootFromPattern(defaultRoot: string, pattern: string, matchOptio
     // clean up the path
     if (findPath) {
         findPath = getDirectoryName(ensureRooted(findPath, '_')); // hack to remove unnecessary trailing slash
-        findPath = normalizePath(findPath); // normalize slashes
+        findPath = normalizeSeparators(findPath); // normalize slashes
     }
 
     return <PatternFindRootInfo>{
@@ -2103,7 +1930,7 @@ function ensurePatternRooted(root: string, p: string) {
     }
 
     // normalize root
-    root = normalizePath(root);
+    root = normalizeSeparators(root);
 
     // escape special glob characters
     root = (process.platform == 'win32' ? root : root.replace(/\\/g, '\\\\')) // escape '\' on OSX/Linux
@@ -2299,3 +2126,172 @@ export function _loadData(): void {
 }
 
 _loadData();
+
+//--------------------------------------------------------------------------------
+// Internal path helpers. Handles cases on Windows that path.___ functions miss.
+//--------------------------------------------------------------------------------
+export var _internal = {};
+
+function ensureRooted(root: string, p: string) {
+    if (!root) {
+        throw new Error('ensureRooted() parameter "root" cannot be empty');
+    }
+
+    if (!p) {
+        throw new Error('ensureRooted() parameter "p" cannot be empty');
+    }
+
+    if (isRooted(p)) {
+        return p;
+    }
+
+    if (process.platform == 'win32' && root.match(/^[A-Z]:$/i)) { // e.g. C:
+        return root + p;
+    }
+
+    // ensure root ends with a separator
+    if (root.endsWith('/') || (process.platform == 'win32' && root.endsWith('\\'))) {
+        // root already ends with a separator
+    }
+    else {
+        root += path.sep; // append separator
+    }
+
+    return root + p;
+}
+_internal['ensureRooted'] = ensureRooted;
+
+/**
+ * Determines the parent path and trims trailing slashes (when safe). Path separators are normalized
+ * in the result. This function works similar to the .NET System.IO.Path.GetDirectoryName() method.
+ * For example, C:\hello\world\ returns C:\hello\world (trailing slash removed). Returns empty when
+ * no higher directory can be determined.
+ */
+function getDirectoryName(p: string): string {
+    // short-circuit if empty
+    if (!p) {
+        return '';
+    }
+
+    // convert slashes on Windows
+    p = process.platform == 'win32' ? p.replace(/\\/g, '/') : p;
+
+    // remove redundant slashes since Path.GetDirectoryName() does
+    let isUnc = process.platform == 'win32' && /^\/\/+[^\/]/.test(p); // e.g. //hello
+    p = (isUnc ? '/' : '') + p.replace(/\/\/+/g, '/'); // preserve leading // for UNC on Windows
+
+    // on Windows, the goal of this function is to match the behavior of
+    // [System.IO.Path]::GetDirectoryName(), e.g.
+    //      C:/             =>
+    //      C:/hello        => C:\
+    //      C:/hello/       => C:\hello
+    //      C:/hello/world  => C:\hello
+    //      C:/hello/world/ => C:\hello\world
+    //      C:              =>
+    //      C:hello         => C:
+    //      C:hello/        => C:hello
+    //      /               =>
+    //      /hello          => \
+    //      /hello/         => \hello
+    //      //hello         =>
+    //      //hello/        =>
+    //      //hello/world   =>
+    //      //hello/world/  => \\hello\world
+    //
+    // unfortunately, path.dirname() can't simply be used. for example, on Windows
+    // it yields different results from Path.GetDirectoryName:
+    //      C:/             => C:/
+    //      C:/hello        => C:/
+    //      C:/hello/       => C:/
+    //      C:/hello/world  => C:/hello
+    //      C:/hello/world/ => C:/hello
+    //      C:              => C:
+    //      C:hello         => C:
+    //      C:hello/        => C:
+    //      /               => /
+    //      /hello          => /
+    //      /hello/         => /
+    //      //hello         => /
+    //      //hello/        => /
+    //      //hello/world   => //hello/world
+    //      //hello/world/  => //hello/world/
+    //      //hello/world/again => //hello/world/
+    //      //hello/world/again/ => //hello/world/
+    //      //hello/world/again/again => //hello/world/again
+    //      //hello/world/again/again/ => //hello/world/again
+    if (process.platform == 'win32') {
+        if (/^[A-Z]:\/?[^\/]+$/i.test(p)) { // e.g. C:/hello or C:hello
+            return p.charAt(2) == '/' ? p.substring(0, 3) : p.substring(0, 2);
+        }
+        else if (/^[A-Z]:\/?$/i.test(p)) { // e.g. C:/ or C:
+            return '';
+        }
+
+        let lastSlashIndex = p.lastIndexOf('/');
+        if (lastSlashIndex < 0) { // file name only
+            return '';
+        }
+        else if (p == '/') { // relative root
+            return '';
+        }
+        else if (lastSlashIndex == 0) { // e.g. /hello
+            return '/';
+        }
+        else if (/^\/\/[^\/]+(\/[^\/]*)?$/.test(p)) { // UNC root, e.g. //hello or //hello/ or //hello/world
+            return '';
+        }
+
+        return p.substring(0, lastSlashIndex);  // e.g. hello/world => hello or hello/world/ => hello/world
+                                                // note, this means trailing slashes for non-root directories
+                                                // (i.e. not C:/, /, or //unc/) will simply be removed.
+    }
+
+    // OSX/Linux
+    if (p.indexOf('/') < 0) { // file name only
+        return '';
+    }
+    else if (p == '/') {
+        return '';
+    }
+    else if (p.endsWith('/')) {
+        return p.substring(0, p.length - 1);
+    }
+
+    return path.dirname(p);
+}
+_internal['getDirectoryName'] = getDirectoryName;
+
+/**
+ * On OSX/Linux, true if path starts with '/'. On Windows, true for paths like:
+ * \, \hello, \\hello\share, C:, and C:\hello (and corresponding alternate separator cases).
+ */
+function isRooted(p: string): boolean {
+    p = normalizeSeparators(p);
+    if (!p) {
+        throw new Error('isRooted() parameter "p" cannot be empty');
+    }
+
+    if (process.platform == 'win32') {
+        return p.startsWith('\\') || // e.g. \ or \hello or \\hello
+            /^[A-Z]:/i.test(p);      // e.g. C: or C:\hello
+    }
+
+    return p.startsWith('/'); // e.g. /hello
+}
+_internal['isRooted'] = isRooted;
+
+function normalizeSeparators(p: string): string {
+    p = p || '';
+    if (process.platform == 'win32') {
+        // convert slashes on Windows
+        p = p.replace(/\//g, '\\');
+
+        // remove redundant slashes
+        let isUnc = /^\\\\+[^\\]/.test(p); // e.g. \\hello
+        return (isUnc ? '\\' : '') + p.replace(/\\\\+/g, '\\'); // preserve leading // for UNC
+    }
+
+    // remove redundant slashes
+    return p.replace(/\/\/+/g, '/');
+}
+_internal['normalizeSeparators'] = normalizeSeparators;

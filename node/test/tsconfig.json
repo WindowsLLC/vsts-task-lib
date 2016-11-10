@@ -19,6 +19,8 @@
         "cctests",
         "loctests",
         "matchtests",
+        "filtertests",
+        "findandmatchtests",
         "mocktests"
     ]
 }
